@@ -13,7 +13,6 @@ setwd(wd)
 aya_bulkFiles <- list.files(path = "/Users/filbinlab/Documents/Jacob/Data/AYA Bulk RNA-seq/")
 filePath <- c("/Users/filbinlab/Documents/Jacob/Data/AYA Bulk RNA-seq/")
 
-
 for (i in 1:length(aya_bulkFiles)) {
   file <- aya_bulkFiles[i]
   print(file)
@@ -30,7 +29,6 @@ for (i in 1:length(aya_bulkFiles)) {
   }
 }
 
-
 library(biomaRt)
 mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
 G_list <- getBM(filters= "ensembl_gene_id", 
@@ -38,7 +36,4 @@ G_list <- getBM(filters= "ensembl_gene_id",
                 values = countFile$Gene,
                 mart = mart)
 
-a <- merge(G_list, countFile, by.x = "ensembl_gene_id", by.y = "Gene")
-
-  merge(countFile, G_list, by.x = "Gene", by.y = "ensembl_gene_id")
-
+countFile <- merge(G_list, countFile, by.x = "ensembl_gene_id", by.y = "Gene")
