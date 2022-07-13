@@ -21,6 +21,8 @@ for (i in 1:length(aya_bulkFiles)) {
   sampleCounts <- read.table(file = paste0(filePath, file), header = TRUE)
   colnames(sampleCounts) <- c("Gene", sampleName)
   
+  sampleCounts <- sampleCounts %>% separate("Gene", c("Gene", NA))
+  
   if (i == 1){
     countFile <- sampleCounts
   } else {
@@ -28,19 +30,15 @@ for (i in 1:length(aya_bulkFiles)) {
   }
 }
 
+
 library(biomaRt)
 mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
-genes <- countFile$Gene %>% data.frame()
-colnames(genes) <- "Gene"
-genes <- genes %>% separate("Gene", c("Gene", NA)) %>% pull(Gene)
-
 G_list <- getBM(filters= "ensembl_gene_id", 
                 attributes= c("ensembl_gene_id", "hgnc_symbol", "description"),
-                values = genes,
+                values = countFile$Gene,
                 mart = mart)
 
-countFile <- merge(countFile, G_list %>% select(ensembl_gene_id, ))
+a <- merge(G_list, countFile, by.x = "ensembl_gene_id", by.y = "Gene")
 
+  merge(countFile, G_list, by.x = "Gene", by.y = "ensembl_gene_id")
 
-library("EnsDb.Hsapiens.v86")
-symbols <- mapIds(org.Hs.eg.db, keys = genes, keytype = "ENSEMBL", column="SYMBOL")
