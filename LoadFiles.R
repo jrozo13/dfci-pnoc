@@ -25,11 +25,6 @@ for (i in 1:length(aya_bulkFiles)) {
   }
 }
 
-library(biomaRt)
-mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
-G_list <- getBM(filters= "ensembl_gene_id", 
-                attributes= c("ensembl_gene_id", "hgnc_symbol", "description"),
-                values = countFile$Gene,
-                mart = mart)
-
-countFile <- merge(G_list, countFile, by.x = "ensembl_gene_id", by.y = "Gene")
+### Convert from ENSEMBL to Gene Symbol ###
+source("/Users/filbinlab/Dropbox (Partners HealthCare)/Filbin lab/Jacob/dfci-pnoc/ensembl_to_symbol.R")
+countFile <- ensembl_to_symbol(count_matrix = countFile)
