@@ -4,14 +4,10 @@
 ########## Initialize ##########
 ## Install global packages ##
 library(tidyverse)
-library(org.Hs.eg.db)
-
-wd <- 
-setwd(wd)
 
 ########## Load Rozowsky data ##########
-aya_bulkFiles <- list.files(path = "/Users/filbinlab/Documents/Jacob/Data/AYA Bulk RNA-seq/")
-filePath <- c("/Users/filbinlab/Documents/Jacob/Data/AYA Bulk RNA-seq/")
+filePath <- c("/Users/filbinlab/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Data/AYA Bulk RNA-seq/")
+aya_bulkFiles <- list.files(path = filePath)
 
 for (i in 1:length(aya_bulkFiles)) {
   file <- aya_bulkFiles[i]
