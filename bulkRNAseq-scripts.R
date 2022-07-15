@@ -1,11 +1,33 @@
 ##### Function to read count outputs from featureCounts #####
 featurec_to_countmatrix <- function(filePath) {
   library(tidyverse)
-  filePath <- c("/Users/filbinlab/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Data/AYA Bulk RNA-seq/star-fc/")
-  aya_bulkFiles <- list.files(path = filePath)
+  files <- list.files(path = filePath)
   
-  for (i in 1:length(aya_bulkFiles)) {
-    file <- aya_bulkFiles[i]
+  for (i in 1:length(files)) {
+    file <- files[i]
+    print(file)
+    sampleName <- sapply(strsplit(file,"_"), getElement, 1)
+    sampleCounts <- read.table(file = paste0(filePath, file), header = TRUE)
+    colnames(sampleCounts) <- c("Gene", sampleName)
+    
+    sampleCounts <- sampleCounts %>% separate("Gene", c("Gene", NA))
+    
+    if (i == 1){
+      countFile <- sampleCounts
+    } else {
+      countFile <- merge(countFile, sampleCounts, by = "Gene")
+    }
+  }
+  return(countFile)
+}
+
+##### Function to read count outputs from rsem #####
+rsem_to_countmatrix <- function(filePath) {
+  library(tidyverse)
+  files <- list.files(path = filePath)
+  
+  for (i in 1:length(files)) {
+    file <- files[i]
     print(file)
     sampleName <- sapply(strsplit(file,"_"), getElement, 1)
     sampleCounts <- read.table(file = paste0(filePath, file), header = TRUE)
