@@ -68,6 +68,50 @@ ensembl_to_symbol <- function(count_matrix) {
   return(count_matrix)
 }
 
+##### Function to make input count matrix for ScoreSignature #####
+NormCenter<-function(cm, scale_factor=10, log_base=2){
+  cm = as.matrix(cm)
+  cm_norm = log(cm/scale_factor+1, base=log_base)
+  cm_norm_center = cm_norm-rowMeans(cm_norm)
+  result = list()
+  result[["raw_data"]] = cm
+  result[["norm_data"]] = cm_norm
+  result[["center_data"]] = cm_norm_center
+  return (result)
+}
 
+##### Function to score bulk RNA-seq samples with gene-set #####
+## @param X.center centered relative expression
+## @param X.mean average of relative expression of each gene (log2 transformed)
+## @param n number of genes with closest average expression for control genesets, default = 100 
+## @param simple whether use average, default  = FALSE
+scoreSignature <- function(X.center, X.mean, s, n=100, simple = FALSE, verbose=FALSE) {
+  if(verbose) {
+    message("cells: ", ncol(X.center))
+    message("genes: ", nrow(X.center))
+    message("genes in signature: ", length(s))
+    message("Using simple average?", simple)
+    message("processing...")
+  }
+  
+  s <- intersect(rownames(X.center), s)
+  message("genes in signature, and also in this dataset: ", length(s))
+  ##message("These genes are: ", s)
+  
+  if (simple){
+    s.score <- colMeans(X.center[s,])
+  }else{
+    s.score <- colMeans(do.call(rbind, lapply(s, function(g) {
+      # g <- s[2]
+      # message(g)
+      if(verbose) message(".", appendLF = FALSE)
+      g.n <- names(sort(abs(X.mean[g] - X.mean))[2:(n+1)])
+      X.center[g, ] - colMeans(X.center[g.n, ])
+    })))
+  }
+  
+  if(verbose) message(" done")
+  return(s.score)
+}
 
 
