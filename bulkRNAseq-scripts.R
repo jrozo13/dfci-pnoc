@@ -131,36 +131,36 @@ Ensembl2Symbol <- function(count_matrix) {
 }
 
 ##### Function to make input count matrix for ScoreSignature #####
-CenterCountsMatrix<- function(cm, alreadyCentered=FALSE){
-  cm_list<- list()
+CenterCountsMatrix<- function(count_matrix, alreadyCentered=FALSE){
+  count_matrix_list<- list()
   if(alreadyCentered){
-    cm_list$tpm<- NA
-    cm_list$cm_center<- cm
-    cm_list$cm_mean<- rowMeans(cm_list$cm_center)
+    count_matrix_list$tpm<- NA
+    count_matrix_list$count_matrix_center<- count_matrix
+    count_matrix_list$count_matrix_mean<- rowMeans(count_matrix_list$count_matrix_center)
   } else{
-    normCenter<- NormCenter(cm)
-    cm_list$tpm<- cm
-    cm_list$cm_center<- normCenter$center_data
-    cm_list$cm_mean<- rowMeans(log2(cm_list$tpm + 1))
+    normCenter<- NormCenter(count_matrix)
+    count_matrix_list$tpm<- count_matrix
+    count_matrix_list$count_matrix_center<- normCenter$center_data
+    count_matrix_list$count_matrix_mean<- rowMeans(log2(count_matrix_list$tpm + 1))
   }
-  return(cm_list)
+  return(count_matrix_list)
 }
 
 ##### Function to score bulk RNA-seq samples with gene-set #####
-## @param X.center centered relative expression
-## @param X.mean average of relative expression of each gene (log2 transformed)
-## @param n number of genes with closest average expression for control genesets, default = 100 
-## @param simple whether use average, default  = FALSE
-scoreSignature <- function(cm.center, cm.mean, s, n=100, simple = FALSE, verbose=FALSE) {
+## count_matrix.center: centered relative expression (output of CenterCountsMatrix)
+## count_matrix.mean: average of relative expression of each gene (log2 transformed; output of CenterCountsMatrix)
+## n: number of genes with closest average expression for control genesets, default = 100 
+## simple: whether use average, default  = FALSE
+scoreSignature <- function(count_matrix.center, count_matrix.mean, s, n=100, simple = FALSE, verbose=FALSE) {
   if(verbose) {
-    message("cells: ", ncol(cm.center))
-    message("genes: ", nrow(cm.center))
+    message("cells: ", ncol(count_matrix.center))
+    message("genes: ", nrow(count_matrix.center))
     message("genes in signature: ", length(s))
     message("Using simple average?", simple)
     message("processing...")
   }
   
-  s <- intersect(rownames(cm.center), s)
+  s <- intersect(rownames(count_matrix.center), s)
   message("genes in signature, and also in this dataset: ", length(s))
 
   if (simple){
@@ -168,8 +168,8 @@ scoreSignature <- function(cm.center, cm.mean, s, n=100, simple = FALSE, verbose
   } else {
     s.score <- colMeans(do.call(rbind, lapply(s, function(g) {
       if(verbose) message(".", appendLF = FALSE)
-      g.n <- names(sort(abs(cm.mean[g] - cm.mean))[2:(n+1)])
-      cm.center[g, ] - colMeans(cm.center[g.n, ])
+      g.n <- names(sort(abs(count_matrix.mean[g] - count_matrix.mean))[2:(n+1)])
+      count_matrix.center[g, ] - colMeans(count_matrix.center[g.n, ])
     })))
   }
   
@@ -181,33 +181,53 @@ scoreSignature <- function(cm.center, cm.mean, s, n=100, simple = FALSE, verbose
 ## For each module score, split samples into "high" or "low" expression
 ## Input: scores = a dataframe with genesets as columns, samples as rows 
 ##        splitBy = denotes how to split samples into high/low geneset scorers
-SplitHighLow<- function(scores, splitBy="Median"){
-  AllClusters<-data.frame(submitter_id=Scores$submitter_id)
-  for (m in names(marker_list_InCohort)){
-    print(m)
-    df<- cbind(Scores[,"submitter_id"], Scores[,m]); df<-as.data.frame(df)
-    ClusterName<- paste0(m, "_Cluster")
-    df$V2<-as.numeric(df$V2)
+SplitHighLow<- function(scoreDF, sampleIDColumn, signatureList, splitBy="Median"){
+  AllClusters <- data.frame(scoreDF[[sampleIDColumn]])
+  colnames(AllClusters) <- sampleIDColumn
+  for (m in names(signatureList)){
+    print(m) # m is a geneset
+    df <- scoreDF %>% select(sampleIDColumn, m) %>% as.data.frame()
+    ClusterName <- paste0(m, "_Cluster")
+    df[[m]] <- as.numeric(df[[m]])
     
     ## Alternative methods for splitting into high/low
     ## Split into top25%/mid50%/bottom25%
-    if(SplitBasedOn=="SplitInto3Quartiles"){
-      df[,"ClusterName"]<- df$V2>quantile(df$V2)["75%"]
-      high<- df[df$V2>quantile(df$V2)["75%"],]; high[,"ClusterName"]<-"High"
-      low<- df[df$V2<quantile(df$V2)["25%"],]; low[,"ClusterName"]<-"Low"
-      mid<-df[!(df$V1 %in% c(high$V1, low$V1)),]; mid[,"ClusterName"]<-"Mid"
-      df<-rbind(high,low); df<-rbind(df, mid)
+    if(splitBy == "SplitInto3Quartiles"){
+      df[,"ClusterName"] <- df[[m]] > quantile(df[[m]])["75%"]
+      high <- df[df[[m]] > quantile(df[[m]])["75%"],]; high[,"ClusterName"]<-"High"
+      low <- df[df[[m]] < quantile(df[[m]])["25%"],]; low[,"ClusterName"]<-"Low"
+      mid <- df[!(df[[m]] %in% c(high[[m]], low[[m]])),]; mid[,"ClusterName"]<-"Mid"
+      df <- rbind(high, low); df <- rbind(df, mid)
     } 
     ## Split based on median
-    if(SplitBasedOn=="Median"){
-      df[,"ClusterName"]<- df$V2>median(df$V2)
-      df[,"ClusterName"]<- gsub("FALSE", "Low", 
-                                gsub("TRUE", "High", df[,"ClusterName"]))
+    if(splitBy=="Median"){
+      df[,"ClusterName"]<- df[[m]] > median(df[[m]])
+      df[,"ClusterName"]<- gsub("FALSE", "Low",gsub("TRUE", "High", df[,"ClusterName"]))
     } 
     
     ## Convert to factor, with "Low" as comparison
     #df$ClusterName<- factor(df$ClusterName, levels=c("High", "Low"))
-    colnames(df)<- c("submitter_id", m, ClusterName)
-    AllClusters<-merge(AllClusters,df, by="submitter_id")
+    colnames(df)<- c(sampleIDColumn, m, ClusterName)
+    AllClusters <- merge(AllClusters, df, by = sampleIDColumn)
   }
+  return(AllClusters)
+  }
+
+ScoreSurvival <- function(metaData, scoreSplitDF, geneSetName, lowHighOnly=FALSE, plotName=NULL){
+  ## Prep data for survival analysis- need time to death, patient, vital status, and group (high/low)
+  metaData <- metaData
+  metaData$status <- as.logical(metaData$status)
+  metaData$time <- as.numeric(metaData$time)
+  metaData$Marker <- scoreSplitDF[,paste0(GeneSetName, "_Cluster")]
+  
+  ## Run survival analysis
+  fit <- survfit(Surv(time, status) ~Marker, data = metaData)
+  paste(fit)
+  plot1 <- plot(fit)
+  plot1 <- ggsurvplot(fit,  data = metaData,
+                      pval = TRUE,
+                      risk.table = TRUE,
+                      risk.table.y.text = FALSE,
+                      risk.table.height = 0.25)
+  return(plot1)
 }

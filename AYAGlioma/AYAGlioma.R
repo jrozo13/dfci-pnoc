@@ -103,18 +103,21 @@ ggsurvplot(fit,
            legend.labs = c("Anaplastic Astro.", "Diffuse Astro.", "Glioblastoma", "Oligodendroglioma"))
 
 ########## Score sample by expression ##########
-input <- CenterCountsMatrix(cm = cpm)
-meta$geneSig <- scoreSignature(input$cm_center, input$cm_mean, s = syn_genesets$curatedSynaptic$gluta, simple = FALSE, verbose = TRUE)
-ggplot(meta, aes(x = pathology16, y = geneSig)) +
+scoreDF <- meta %>% select(SampleID.new, pathology16, pathology21, time, status)
+input <- CenterCountsMatrix(count_matrix = cpm)
+scoreDF$geneSig <- scoreSignature(input$count_matrix_center, input$count_matrix_mean, s = syn_genesets$curatedSynaptic$gluta, simple = FALSE, verbose = TRUE)
+ggplot(scoreDF, aes(x = pathology16, y = geneSig)) +
   geom_boxplot() +
   geom_jitter()
 
-meta$gaba <- scoreSignature(input$cm_center, input$cm_mean, s = syn_genesets$curatedSynaptic$gaba, simple = FALSE, verbose = TRUE)
-meta$general_synaptic <- scoreSignature(input$cm_center, input$cm_mean, s = syn_genesets$curatedSynaptic$general_synaptic, simple = FALSE, verbose = TRUE)
-intersect(syn_genesets$curatedSynaptic$gaba, syn_genesets$curatedSynaptic$gluta) # these gene sets do not overlap
-plot(meta$gluta, meta$gaba)
-hist(meta$gluta)
-RunSurvivalAnalysis()
+scoreDF$gaba <- scoreSignature(input$count_matrix_center, input$count_matrix_mean, s = syn_genesets$curatedSynaptic$gaba, simple = FALSE, verbose = TRUE)
+scoreDF$gluta <- scoreSignature(input$count_matrix_center, input$count_matrix_mean, s = syn_genesets$curatedSynaptic$gluta, simple = FALSE, verbose = TRUE)
+
+markerList <- list(gaba = syn_genesets$curatedSynaptic$gaba, gluta = syn_genesets$curatedSynaptic$gluta)
+scoreSplitDF <- SplitHighLow(scoreDF = scoreDF, signatureList = markerList, sampleIDColumn = "SampleID.new", splitBy = "Median")
+
+ScoreSurvival(scoreDF, scoreSplitDF = scoreSplitDF, geneSetName = "gaba")
+
 
 
 
