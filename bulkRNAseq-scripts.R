@@ -116,7 +116,7 @@ MakeQCPlots <- function(qcFile, countMatrix) {
           axis.title.y = element_text(color="black", face="bold", size=12),
           axis.text.x = element_text(angle=45, hjust=1))
   
-  return(list(plot1, plot2, plot3))
+  return(list(pRibo = plot1, nAligned = plot2, pAligned = plot3))
 }
 
 ##### Function to go from ENSEMBL to Gene Symbol #####
@@ -143,12 +143,26 @@ Ensembl2Symbol <- function(countMatrix) {
 }
 
 ##### Function to make input count matrix for ScoreSignature #####
+## Normalize and center count matrix, for input into ScoreSignature
+NormCenter<-function(cm, scale_factor=10, log_base=2){
+  cm = as.matrix(cm)
+  cm_norm = log(cm/scale_factor+1, base=log_base)
+  cm_norm_center = cm_norm-rowMeans(cm_norm)
+  result = list()
+  result[["raw_data"]] = cm
+  result[["norm_data"]] = cm_norm
+  result[["center_data"]] = cm_norm_center
+  return (result)
+}
+
 CenterCountsMatrix <- function(countMatrix, alreadyCentered = FALSE){
   countMatrix_list <- list()
   if(alreadyCentered) {
+    countMatrix_list$tpm <- NA
     countMatrix_list$countMatrix_center<- countMatrix
     countMatrix_list$countMatrix_mean<- rowMeans(countMatrix_list$countMatrix_center)
   } else {
+    countMatrix_list$tpm <- countMatrix
     normCenter <- NormCenter(countMatrix)
     countMatrix_list$countMatrix_center<- normCenter$center_data
     countMatrix_list$countMatrix_mean<- rowMeans(log2(countMatrix_list$tpm + 1))
@@ -221,23 +235,23 @@ SplitHighLow <- function(scoreDF, sampleIDColumn, signatureList, splitBy = "Medi
     AllClusters <- merge(AllClusters, df, by = sampleIDColumn)
   }
   return(AllClusters)
-  }
+}
 
 ScoreSurvival <- function(metaData, scoreSplitDF, geneSetName, lowHighOnly=FALSE, plotName=NULL){
   ## Prep data for survival analysis- need time to death, patient, vital status, and group (high/low)
-  metaData <- metaData
   metaData$status <- as.logical(metaData$status)
   metaData$time <- as.numeric(metaData$time)
-  metaData$Marker <- scoreSplitDF[,paste0(GeneSetName, "_Cluster")]
+  metaData$Marker <- scoreSplitDF[,paste0(geneSetName, "_Cluster")]
   
   ## Run survival analysis
   fit <- survfit(Surv(time, status) ~Marker, data = metaData)
+  pvalue <- surv_pvalue(fit, metaData)$pval.txt
   paste(fit)
-  plot1 <- plot(fit)
-  plot1 <- ggsurvplot(fit,  data = metaData,
+  plot1 <- ggsurvplot(fit,
+                      data = metaData,
                       pval = TRUE,
                       risk.table = TRUE,
                       risk.table.y.text = FALSE,
                       risk.table.height = 0.25)
-  return(plot1)
+  return(list(plot = plot1, p_val = pvalue))
 }

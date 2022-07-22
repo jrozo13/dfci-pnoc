@@ -14,7 +14,7 @@ source("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/dfci-pnoc/bulkRNAseq-sc
 
 ## Set paths
 wd <- c("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/")
-fwd <- c(paste0(wd, "Figures"))
+fwd <- c(paste0(wd, "Figures/"))
 
 ########## Load Data ##########
 ##### Load bulk RNAseq Data
@@ -55,7 +55,7 @@ meta$SampleID.new %in% colnames(countFile_fc) %>% table()
 colnames(countFile_fc) %in% meta$SampleID.new %>% table()
 
 ##### Load gene set files
-syn_genesets <- readRDS("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Data/AYA Bulk RNA-seq/synaptic_markers_list.Rds")
+syn_genesets <- readRDS("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/General RDS/synaptic_markers_list.Rds")
 source("~/Dropbox (Partners HealthCare)/Filbin lab/Shared/Scripts/Survival_HelperFunctions.R")
 
 ########## Process bulk RNA-seq ##########
@@ -88,43 +88,83 @@ for (i in 1:length(colnames(cpm_fc))) {
 }
 
 ##### Analysis of quality control data #####
-
-
 qcPlots_rsem <- MakeQCPlots(qcFile = qcFile_rsem, countMatrix = cpm_rsem)
-qcPlots_rsem
+qcPlots_rsem.ribo <- qcPlots_rsem$pRibo
+qcPlots_rsem.numAligned <- qcPlots_rsem$nAligned
+qcPlots_rsem.percAligned <- qcPlots_rsem$pAligned
+print(qcPlots_fc.ribo, newpage = FALSE)
+
+pdf(paste0(fwd, "BulkRNAseqQC.rsem.pdf"), width = 15, height = 5)
+ggarrange(qcPlots_rsem.ribo, qcPlots_rsem.numAligned, qcPlots_rsem.percAligned,
+                                  ncol = 3, nrow = 1)
+dev.off()
 
 qcPlots_fc <- MakeQCPlots(qcFile = qcFile_fc, countMatrix = cpm_fc)
-qcPlots_fc
+qcPlots_fc.ribo <- qcPlots_fc$pRibo
+qcPlots_fc.numAligned <- qcPlots_fc$nAligned
+qcPlots_fc.percAligned <- qcPlots_fc$pAligned
+
+pdf(paste0(fwd, "BulkRNAseqQC.fc.pdf"), width = 15, height = 5)
+ggarrange(qcPlots_fc.ribo, qcPlots_fc.numAligned, qcPlots_fc.percAligned,
+          ncol = 3, nrow = 1)
+dev.off()
 
 ########## Survival on clinical metadata ##########
 library(survival)
 library(survminer)
 
-fit <- survfit(Surv(time = time, status) ~ pathology16, data = meta)
-pvalue <- surv_pvalue(fit, meta)$pval.txt
-ggsurvplot(fit,
-           pval = TRUE,
+fit.who16 <- survfit(Surv(time = time, status) ~ pathology16, data = meta)
+pvalue <- surv_pvalue(fit.who16, meta)$pval.txt
+survivalPlot.who16 <- ggsurvplot(fit.who16,
            risk.table = TRUE, 
            risk.table.y.text = FALSE,
            risk.table.height = 0.25,
            legend.labs = c("Anaplastic Astro.", "Diffuse Astro.", "Glioblastoma", "Oligodendroglioma"))
 
+pdf(paste0(fwd, "SurvivalCurve.WHO16Diagnosis.pdf"), width = 7, height = 7)
+print(survivalPlot.who16, newpage = FALSE)
+dev.off()
+
+fit.who21 <- survfit(Surv(time = time, status) ~ pathology21, data = meta)
+pvalue <- surv_pvalue(fit.who21, meta)$pval.txt
+survivalPlot.who21 <- ggsurvplot(fit.who21,
+                                 risk.table = TRUE, 
+                                 risk.table.y.text = FALSE,
+                                 risk.table.height = 0.25,
+                                 legend.labs = c("Astrocytoma", "Glioblastoma", "Oligodendroglioma"))
+
+pdf(paste0(fwd, "SurvivalCurve.WHO21Diagnosis.pdf"), width = 7, height = 7)
+print(survivalPlot.who21, newpage = FALSE)
+dev.off()
+
 ########## Score sample by expression ##########
 scoreDF <- meta %>% select(SampleID.new, pathology16, pathology21, time, status)
-input <- CenterCountsMatrix(count_matrix = cpm)
-scoreDF$geneSig <- scoreSignature(input$count_matrix_center, input$count_matrix_mean, s = syn_genesets$curatedSynaptic$gluta, simple = FALSE, verbose = TRUE)
+input <- CenterCountsMatrix(countMatrix = cpm_rsem)
+scoreDF$geneSig <- ScoreSignature(input$countMatrix_center, input$countMatrix_mean, s = syn_genesets$curatedSynaptic$gluta, simple = FALSE, verbose = TRUE)
 ggplot(scoreDF, aes(x = pathology16, y = geneSig)) +
   geom_boxplot() +
   geom_jitter()
 
-scoreDF$gaba <- scoreSignature(input$count_matrix_center, input$count_matrix_mean, s = syn_genesets$curatedSynaptic$gaba, simple = FALSE, verbose = TRUE)
-scoreDF$gluta <- scoreSignature(input$count_matrix_center, input$count_matrix_mean, s = syn_genesets$curatedSynaptic$gluta, simple = FALSE, verbose = TRUE)
+scoreDF$gaba <- ScoreSignature(input$countMatrix_center, input$countMatrix_mean, s = syn_genesets$curatedSynaptic$gaba, simple = FALSE, verbose = TRUE)
+scoreDF$gluta <- ScoreSignature(input$countMatrix_center, input$countMatrix_mean, s = syn_genesets$curatedSynaptic$gluta, simple = FALSE, verbose = TRUE)
 
-markerList <- list(gaba = syn_genesets$curatedSynaptic$gaba, gluta = syn_genesets$curatedSynaptic$gluta)
-scoreSplitDF <- SplitHighLow(scoreDF = scoreDF, signatureList = markerList, sampleIDColumn = "SampleID.new", splitBy = "Median")
+a <- ScoreSignature(input$countMatrix_center, countMatrix.mean = input$countMatrix_mean,
+                    s = syn_genesets$curatedSynaptic$gluta, geneSetName = "gluta",
+                    metaData = meta, simple = FALSE, verbose = TRUE)
 
-ScoreSurvival(scoreDF, scoreSplitDF = scoreSplitDF, geneSetName = "gaba")
-
+markerList <- list(gaba = syn_genesets$curatedSynaptic$gaba,
+                   gluta = syn_genesets$curatedSynaptic$gluta)
+scoreSplitDF <- SplitHighLow(scoreDF = scoreDF, signatureList = markerList, sampleIDColumn = "SampleID.new", splitBy = "SplitInto3Quartiles")
+a <- ScoreSurvival(scoreDF, scoreSplitDF = scoreSplitDF, geneSetName = "gluta")
+fit <- survfit(Surv(scoreDF$time, scoreDF$status) ~ scoreSplitDF$gluta_Cluster)
+surv_pvalue(fit, data = scoreSplitDF)$pval.txt
+plot1 <- ggsurvplot(fit,
+                    data = metaData,
+                    pval = TRUE,
+                    risk.table = TRUE,
+                    risk.table.y.text = FALSE,
+                    risk.table.height = 0.25)
+a$plot
 
 
 
