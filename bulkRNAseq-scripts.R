@@ -1,3 +1,7 @@
+######################################################
+##### Functions useful for bulk RNA-seq analysis #####
+######################################################
+
 ##### Function to read count outputs from featureCounts #####
 MakeCountMatrixFromFeatureCounts <- function(filePath) {
   library(tidyverse)
@@ -24,29 +28,24 @@ MakeCountMatrixFromFeatureCounts <- function(filePath) {
 ##### Function to read count outputs from rsem #####
 MakeCountMatrixFromRSEM <- function(filePath) {
   library(tidyverse)
-  files <- list.files(path = filePath, pattern = ".txt")
-  
-  for (i in 1:length(files)) {
-    file <- files[i]
-    print(file)
-    sampleName <- sapply(strsplit(file,"_"), getElement, 1)
-    sampleCounts <- read.table(file = paste0(filePath, file), header = TRUE)
-    colnames(sampleCounts) <- c("Gene", sampleName)
-    
-    sampleCounts <- sampleCounts %>% separate("Gene", c("Gene", NA))
-    
-    if (i == 1){
-      countFile <- sampleCounts
-    } else {
-      countFile <- merge(countFile, sampleCounts, by = "Gene")
-    }
+  countFile <- read.csv(filePath)
+  samples <- colnames(countFile)
+  for (i in 2:length(samples)) {
+    sample <- samples[i]
+    sampleName <- sapply(strsplit(sample,"[.]"), getElement, 1)
+    colnames(countFile)[i] <- sampleName
   }
+  colnames(countFile)[1] <- "Gene"
+  countFile <- countFile %>% separate("Gene", c("Gene", NA))
   return(countFile)
 }
 
-##### Function to make QC file from featureCounts.summary outputs #####
-MakeQCFileFromFeatureCountsOutput <- function(filePath.QC) {
+##### Function to make QC file from featureCounts.summary directory OR rsem quality file #####
+## Note: if tool = featureCounts, provide directory; if tool = rsem, provide csv file
+MakeQCFile <- function(filePath.QC, tool) {
   library(tidyverse)
+  
+  if (tool == "featureCounts") {
   files <- list.files(path = filePath.QC, pattern = ".txt.summary")
   for (i in 1:length(files)) {
     file <- files[i]
@@ -62,19 +61,32 @@ MakeQCFileFromFeatureCountsOutput <- function(filePath.QC) {
   }
   qcFile <- qcFile %>% column_to_rownames(var = "Metric")
   qcFile <- data.frame(t(qcFile))
-  qcFile$Unassigned_All <- rowSums(qcFile) - qcFile$Assigned
+
+  qcFile$nAligned <- qcFile$Assigned
+  qcFile$Assigned <- NULL
+  
+  qcFile$nTotal <- rowSums(qcFile)
+  }
+  
+  if (tool == "rsem") {
+    qcFile <- read.csv(filePath.QC)
+    qcFile <- qcFile %>% separate("sample", c("sample", NA)) %>%
+      column_to_rownames(var = "sample")
+  }
+  
+  qcFile <- qcFile %>% select(nTotal, nAligned)
   return(qcFile)
 }
 
 ##### Function to make QC plots from qcFile and count matrix #####
-MakeQCPlotsFromQCData <- function(qcFile, countMatrix) {
+MakeQCPlots <- function(qcFile, countMatrix) {
   library(readr)
   riboGenes <- read_csv("~/Dropbox (Partners HealthCare)/Filbin lab/Shared/Marker_genes/RibosomalGenes.csv", col_names = "Gene", show_col_types = FALSE) %>% pull(Gene)
   nRiboCounts <- countMatrix[rownames(countMatrix) %in% riboGenes,]
   riboQC <- data.frame(RiboPercent = colSums(nRiboCounts)/colSums(countMatrix), CountSum = colSums(countMatrix))
   qcFile <- cbind(qcFile, riboQC) %>% rownames_to_column(var = "sample")
   
-  plot1 <- ggplot(qcFile, aes(x=sample, y=RiboPercent))+ 
+  plot1 <- ggplot(qcFile, aes(x = sample, y = RiboPercent))+ 
     geom_bar(position="dodge", stat="identity")+
     ylim(0, 0.25)+
     xlab("")+
@@ -84,22 +96,22 @@ MakeQCPlotsFromQCData <- function(qcFile, countMatrix) {
           axis.title.y = element_text(color = "black", face = "bold", size = 12),
           axis.text.x = element_text(angle = 45, hjust = 1))
   
-  plot2 <- ggplot(qcFile, aes(x = sample, y = Assigned))+ 
+  plot2 <- ggplot(qcFile, aes(x = sample, y = nAligned))+ 
     geom_bar(position="dodge", stat="identity")+
     geom_hline(yintercept = 10^7, color="red", linetype="dashed", size=1.5)+
     xlab("")+
-    ylab("Number of assigned reads")+
-    ggtitle("Number of reads")+
+    ylab("Number of reads")+
+    ggtitle("Number of aligned reads")+
     theme(axis.text=element_text(color="black", face="bold"),
           axis.title.y = element_text(color="black", face="bold", size=12),
           axis.text.x = element_text(angle=45, hjust=1))
   
-  plot3 <- ggplot(qcFile, aes(x = sample, y = Unassigned_All/(Unassigned_All + Assigned)))+ 
+  plot3 <- ggplot(qcFile, aes(x = sample, y = nAligned/nTotal))+ 
     geom_bar(position="dodge", stat="identity")+
     xlab("")+
     ylim(c(0,1)) +
     ylab("Percentage of total reads")+
-    ggtitle("Percentage of unassigned reads")+
+    ggtitle("Percentage of aligned reads")+
     theme(axis.text=element_text(color="black", face="bold"),
           axis.title.y = element_text(color="black", face="bold", size=12),
           axis.text.x = element_text(angle=45, hjust=1))
@@ -108,59 +120,57 @@ MakeQCPlotsFromQCData <- function(qcFile, countMatrix) {
 }
 
 ##### Function to go from ENSEMBL to Gene Symbol #####
-Ensembl2Symbol <- function(count_matrix) {
+Ensembl2Symbol <- function(countMatrix) {
   library(biomaRt)
   library(tidyverse)
   
   # mart was created: July 14, 2022
   # mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
-  mart <- readRDS("/Users/filbinlab/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Data/General RDS/ensembl_to_symbol.RDS")
+  mart <- readRDS("/Users/filbinlab/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/General RDS/ensembl_to_symbol.RDS")
   
-  colnames(count_matrix)[1] <- "ensembl_gene_id"
+  colnames(countMatrix)[1] <- "ensembl_gene_id"
   G_list <- getBM(filters = "ensembl_gene_id", 
                   attributes= c("ensembl_gene_id", "hgnc_symbol"),
-                  values = count_matrix$ensembl_gene_id,
+                  values = countMatrix$ensembl_gene_id,
                   mart = mart)
-  count_matrix <- merge(G_list, count_matrix, by = "ensembl_gene_id")
-  count_matrix <- count_matrix %>% 
+  countMatrix <- merge(G_list, countMatrix, by = "ensembl_gene_id")
+  countMatrix <- countMatrix %>% 
     subset(select = -c(ensembl_gene_id)) %>%
     filter(hgnc_symbol != "")
-  count_matrix <- aggregate(. ~ hgnc_symbol, data = count_matrix, FUN = sum)
+  countMatrix <- aggregate(. ~ hgnc_symbol, data = countMatrix, FUN = sum)
   
-  return(count_matrix)
+  return(countMatrix)
 }
 
 ##### Function to make input count matrix for ScoreSignature #####
-CenterCountsMatrix<- function(count_matrix, alreadyCentered=FALSE){
-  count_matrix_list<- list()
-  if(alreadyCentered){
-    count_matrix_list$tpm<- NA
-    count_matrix_list$count_matrix_center<- count_matrix
-    count_matrix_list$count_matrix_mean<- rowMeans(count_matrix_list$count_matrix_center)
-  } else{
-    normCenter<- NormCenter(count_matrix)
-    count_matrix_list$tpm<- count_matrix
-    count_matrix_list$count_matrix_center<- normCenter$center_data
-    count_matrix_list$count_matrix_mean<- rowMeans(log2(count_matrix_list$tpm + 1))
+CenterCountsMatrix <- function(countMatrix, alreadyCentered = FALSE){
+  countMatrix_list <- list()
+  if(alreadyCentered) {
+    countMatrix_list$countMatrix_center<- countMatrix
+    countMatrix_list$countMatrix_mean<- rowMeans(countMatrix_list$countMatrix_center)
+  } else {
+    normCenter <- NormCenter(countMatrix)
+    countMatrix_list$countMatrix_center<- normCenter$center_data
+    countMatrix_list$countMatrix_mean<- rowMeans(log2(countMatrix_list$tpm + 1))
   }
-  return(count_matrix_list)
+  return(countMatrix_list)
 }
 
 ##### Function to score bulk RNA-seq samples with gene-set #####
-## count_matrix.center: centered relative expression (output of CenterCountsMatrix)
-## count_matrix.mean: average of relative expression of each gene (log2 transformed; output of CenterCountsMatrix)
+## countMatrix.center: centered relative expression (output of CenterCountsMatrix)
+## countMatrix.mean: average of relative expression of each gene (log2 transformed; output of CenterCountsMatrix)
 ## n: number of genes with closest average expression for control genesets, default = 100 
 ## simple: whether use average, default  = FALSE
-scoreSignature <- function(count_matrix.center, count_matrix.mean, s, n=100, simple = FALSE, verbose=FALSE) {
+ScoreSignature <- function(countMatrix.center, countMatrix.mean, s, n = 100, simple = FALSE, verbose=FALSE) {
   if(verbose) {
-    message("cells: ", ncol(count_matrix.center))
-    message("genes: ", nrow(count_matrix.center))
+    message("cells: ", ncol(countMatrix.center))
+    message("genes: ", nrow(countMatrix.center))
     message("genes in signature: ", length(s))
     message("Using simple average?", simple)
     message("processing...")
   }
   
-  s <- intersect(rownames(count_matrix.center), s)
+  s <- intersect(rownames(countMatrix.center), s)
   message("genes in signature, and also in this dataset: ", length(s))
 
   if (simple){
@@ -168,8 +178,8 @@ scoreSignature <- function(count_matrix.center, count_matrix.mean, s, n=100, sim
   } else {
     s.score <- colMeans(do.call(rbind, lapply(s, function(g) {
       if(verbose) message(".", appendLF = FALSE)
-      g.n <- names(sort(abs(count_matrix.mean[g] - count_matrix.mean))[2:(n+1)])
-      count_matrix.center[g, ] - colMeans(count_matrix.center[g.n, ])
+      g.n <- names(sort(abs(countMatrix.mean[g] - countMatrix.mean))[2:(n+1)])
+      countMatrix.center[g, ] - colMeans(countMatrix.center[g.n, ])
     })))
   }
   
@@ -179,9 +189,9 @@ scoreSignature <- function(count_matrix.center, count_matrix.mean, s, n=100, sim
 
 ## From a dataframe of scores for each geneset, split samples into high/low expressors
 ## For each module score, split samples into "high" or "low" expression
-## Input: scores = a dataframe with genesets as columns, samples as rows 
-##        splitBy = denotes how to split samples into high/low geneset scorers
-SplitHighLow<- function(scoreDF, sampleIDColumn, signatureList, splitBy="Median"){
+## scores: a dataframe with genesets as columns, samples as rows 
+## splitBy: denotes how to split samples into high/low geneset scorers
+SplitHighLow <- function(scoreDF, sampleIDColumn, signatureList, splitBy = "Median"){
   AllClusters <- data.frame(scoreDF[[sampleIDColumn]])
   colnames(AllClusters) <- sampleIDColumn
   for (m in names(signatureList)){

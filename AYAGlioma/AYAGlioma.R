@@ -12,28 +12,32 @@ library(reshape2)
 ## Install custom functions
 source("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/dfci-pnoc/bulkRNAseq-scripts.R")
 
+## Set paths
+wd <- c("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/")
+fwd <- c(paste0(wd, "Figures"))
+
 ########## Load Data ##########
 ##### Load bulk RNAseq Data
-filePath_fc <- c("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Data/AYA Bulk RNA-seq/star-fc/")
+filePath_fc <- c("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/star-fc/")
 countFile_fc <- MakeCountMatrixFromFeatureCounts(filePath = filePath_fc)
 
-filePath_rsem <- c("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Data/AYA Bulk RNA-seq/star-rsem/")
-countFile_rsem <- MakeCountMatrixFromRSEM(filePath = filePath_rsem)
+countFile_rsem <- MakeCountMatrixFromRSEM(filePath = "~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/cm_counts_counts-rsem.csv")
 
-countFile_fc <- Ensembl2Symbol(count_matrix = countFile_fc)
-countFile_fc <- countFile_fc %>% column_to_rownames(var = "hgnc_symbol")
+countFile_fc <- Ensembl2Symbol(countMatrix = countFile_fc) %>% 
+  column_to_rownames(var = "hgnc_symbol")
 
-countFile_rsem <- Ensembl2Symbol(count_matrix = countFile_rsem)
-countFile_rsem <- countFile_rsem %>% column_to_rownames(var = "hgnc_symbol")
+countFile_rsem <- Ensembl2Symbol(countMatrix = countFile_rsem) %>% 
+  column_to_rownames(var = "hgnc_symbol")
 
 shared_genes <- intersect(rownames(countFile_fc), rownames(countFile_rsem))
 
 ##### Load QC Files
-filePath_qc <- c("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Data/AYA Bulk RNA-seq/star-fc/star-fc.QC/")
-qcFile_fc <- MakeQCFileFromFeatureCountsOutput(filePath.QC = filePath_qc)
-
+filePath_qc <- c("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/star-fc/star-fc.QC/")
+qcFile_fc <- MakeQCFile(filePath.QC = filePath_qc, tool = "featureCounts")
+qcFile_rsem <- MakeQCFile(filePath.QC = "~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/qc_counts-rsem.csv",
+                          tool = "rsem")
 ##### Load AYA clinical data
-meta <- read_excel("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Data/AYA Bulk RNA-seq/Deidentified RNAseq Patient Clinical Data.xlsx",
+meta <- read_excel("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/Deidentified RNAseq Patient Clinical Data.xlsx",
                    skip = 1) 
 meta <- meta %>%
   mutate(SampleID.new = paste0("s", sapply(strsplit(as.character(meta$SampleID), "-"), `[`, 1))) %>% 
@@ -55,39 +59,42 @@ syn_genesets <- readRDS("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Data/A
 source("~/Dropbox (Partners HealthCare)/Filbin lab/Shared/Scripts/Survival_HelperFunctions.R")
 
 ########## Process bulk RNA-seq ##########
-### Compare expression profiles of featureCounts and rsem ###
-for (sample in colnames(countFile_fc)) {
-  print(sample)
-  print(cor(countFile_fc[shared_genes, sample], countFile_rsem[shared_genes, sample]))
+##### Compare expression profiles of featureCounts and rsem #####
+comparison <- data.frame(patient = as.character(), cor = as.numeric())
+for (i in 1:length(colnames(countFile_fc))) {
+  patient <- colnames(countFile_fc)[i]
+  cor <- cor(countFile_fc[shared_genes, patient], countFile_rsem[shared_genes, patient])
+  df <- data.frame(patient, cor)
+  comparison <- rbind(comparison, df)
 }
 
 fc.rsem_Cor <- cor(countFile_fc[shared_genes,], countFile_rsem[shared_genes,])
-pheatmap(fc.rsem_Cor, cluster_rows = F, cluster_cols = F)
+pheatmap(fc.rsem_Cor, cluster_cols = FALSE, cluster_rows = FALSE)
 
 densityDF <- data.frame(sum = c(colSums(countFile_fc), colSums(countFile_rsem)), method = c(rep("featureCounts", 23), rep("rsem", 23)))
 ggplot(densityDF, aes(x = sum, fill = method)) +
   geom_density(alpha = 0.4) +
-  xlim(c(min-10^7/2, max+10^7/2)) +
-  xlab(label = "Total gene expression")
+  xlim(c(min(densityDF$sum)-10^7/2, max(densityDF$sum)+10^7/2)) +
+  xlab(label = "Total counts")
 
 cpm_fc <- apply(countFile_fc, 2, function(x) (x/sum(x))*1000000)
 cpm_rsem <- apply(countFile_rsem, 2, function(x) (x/sum(x))*1000000)
-for (sample in colnames(cpm_fc)) {
-  print(sample)
-  print(cor(cpm_fc[shared_genes, sample], cpm_rsem[shared_genes, sample]))
+comparison <- data.frame(patient = as.character(), cor = as.numeric())
+for (i in 1:length(colnames(cpm_fc))) {
+  patient <- colnames(cpm_fc)[i]
+  cor <- cor(cpm_fc[shared_genes, patient], cpm_rsem[shared_genes, patient])
+  df <- data.frame(patient, cor)
+  comparison <- rbind(comparison, df)
 }
-# Use featureCounts output from here on out
-cpm <- cpm_fc
 
-rm(cpm_rsem)
-rm(countFile_rsem)
-rm(filePath_rsem)
+##### Analysis of quality control data #####
 
-##### Qualtiy control on featureCounts data
-qcPlots <- MakeQCPlotsFromQCData(qcFile = qcFile_fc, countMatrix = cm)
-qcPlots[[1]]
-qcPlots[[2]]
-qcPlots[[3]]
+
+qcPlots_rsem <- MakeQCPlots(qcFile = qcFile_rsem, countMatrix = cpm_rsem)
+qcPlots_rsem
+
+qcPlots_fc <- MakeQCPlots(qcFile = qcFile_fc, countMatrix = cpm_fc)
+qcPlots_fc
 
 ########## Survival on clinical metadata ##########
 library(survival)
