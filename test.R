@@ -1,4 +1,7 @@
-ScoreSignature <- function(countMatrix.center, countMatrix.mean, s, geneSetName, metaData,
+
+
+
+ScoreSignatureAndSplit <- function(countMatrix.center, countMatrix.mean, s, geneSetName, metaData,
                            n = 100, splitBy = "Median", simple = FALSE, verbose = FALSE) {
   if(verbose) {
     message("cells: ", ncol(countMatrix.center))
@@ -23,11 +26,16 @@ ScoreSignature <- function(countMatrix.center, countMatrix.mean, s, geneSetName,
   
   if(verbose) message(" done")
   
-  metaData[[geneSetName]] <- sigScore
+  sigScore <- sigScore %>% as.data.frame()
+  colnames(sigScore)[1] <- geneSetName
+  
   if (splitBy == "Quartile") { n = 4 }
   if (splitBy == "Median") { n = 2 }
-  newColName <- paste0(geneSetName, "Cluster")
-  metaData <- metaData %>%
-    mutate(paste0(geneSetName, "_Cluster") = ntile(geneSetName, n))
+  
+  scoreSplit <- sigScore %>% mutate(clusters = ntile(sigScore[[geneSetName]], n))
+  colnames(scoreSplit)[2] <- paste0(geneSetName, "_Cluster")
+  
+  metaData <- cbind(metaData, scoreSplit)
+  
   return(metaData)
 }

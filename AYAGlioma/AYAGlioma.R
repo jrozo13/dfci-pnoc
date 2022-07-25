@@ -138,24 +138,29 @@ print(survivalPlot.who21, newpage = FALSE)
 dev.off()
 
 ########## Score sample by expression ##########
-scoreDF <- meta %>% select(SampleID.new, pathology16, pathology21, time, status)
+meta2 <- ScoreSignatureAndSplit(countMatrix.center = input$countMatrix_center,
+                                countMatrix.mean = input$countMatrix_mean,
+                                metaData = meta,
+                                s = syn_genesets$msigdb$glutamatergic_synapse,
+                                geneSetName = "test",
+                                splitBy = "Median",
+                                verbose = TRUE)
+test <- ScoreSurvival(metaData = meta2, geneSetName = "test")
+test$plot
+
+
+
+scoreDF <- meta %>% dplyr::select(SampleID.new, pathology16, pathology21, time, status)
 input <- CenterCountsMatrix(countMatrix = cpm_rsem)
-scoreDF$geneSig <- ScoreSignature(input$countMatrix_center, input$countMatrix_mean, s = syn_genesets$curatedSynaptic$gluta, simple = FALSE, verbose = TRUE)
 ggplot(scoreDF, aes(x = pathology16, y = geneSig)) +
   geom_boxplot() +
   geom_jitter()
 
-scoreDF$gaba <- ScoreSignature(input$countMatrix_center, input$countMatrix_mean, s = syn_genesets$curatedSynaptic$gaba, simple = FALSE, verbose = TRUE)
-scoreDF$gluta <- ScoreSignature(input$countMatrix_center, input$countMatrix_mean, s = syn_genesets$curatedSynaptic$gluta, simple = FALSE, verbose = TRUE)
+scoreDF$gluta <- ScoreSignature_old(input$countMatrix_center, input$countMatrix_mean, s = syn_genesets$curatedSynaptic$gluta, simple = FALSE, verbose = TRUE)
 
-a <- ScoreSignature(input$countMatrix_center, countMatrix.mean = input$countMatrix_mean,
-                    s = syn_genesets$curatedSynaptic$gluta, geneSetName = "gluta",
-                    metaData = meta, simple = FALSE, verbose = TRUE)
-
-markerList <- list(gaba = syn_genesets$curatedSynaptic$gaba,
-                   gluta = syn_genesets$curatedSynaptic$gluta)
-scoreSplitDF <- SplitHighLow(scoreDF = scoreDF, signatureList = markerList, sampleIDColumn = "SampleID.new", splitBy = "SplitInto3Quartiles")
-a <- ScoreSurvival(scoreDF, scoreSplitDF = scoreSplitDF, geneSetName = "gluta")
+markerList <- list(gluta = syn_genesets$curatedSynaptic$gluta)
+scoreSplitDF <- SplitHighLow(scoreDF = scoreDF, signatureList = markerList, sampleIDColumn = "SampleID.new", splitBy = "Median")
+a <- ScoreSurvival(cbind(scoreDF, scoreSplitDF), geneSetName = "gluta")
 fit <- survfit(Surv(scoreDF$time, scoreDF$status) ~ scoreSplitDF$gluta_Cluster)
 surv_pvalue(fit, data = scoreSplitDF)$pval.txt
 plot1 <- ggsurvplot(fit,

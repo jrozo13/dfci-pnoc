@@ -2,9 +2,16 @@
 ##### Functions useful for bulk RNA-seq analysis #####
 ######################################################
 
+##### Load important packages #####
+library(tidyverse)
+library(readr)
+library(biomaRt)
+library(survival)
+library(survminer)
+library(ggplot2)
+
 ##### Function to read count outputs from featureCounts #####
 MakeCountMatrixFromFeatureCounts <- function(filePath) {
-  library(tidyverse)
   files <- list.files(path = filePath, pattern = ".txt")
   
   for (i in 1:length(files)) {
@@ -27,7 +34,6 @@ MakeCountMatrixFromFeatureCounts <- function(filePath) {
 
 ##### Function to read count outputs from rsem #####
 MakeCountMatrixFromRSEM <- function(filePath) {
-  library(tidyverse)
   countFile <- read.csv(filePath)
   samples <- colnames(countFile)
   for (i in 2:length(samples)) {
@@ -43,8 +49,6 @@ MakeCountMatrixFromRSEM <- function(filePath) {
 ##### Function to make QC file from featureCounts.summary directory OR rsem quality file #####
 ## Note: if tool = featureCounts, provide directory; if tool = rsem, provide csv file
 MakeQCFile <- function(filePath.QC, tool) {
-  library(tidyverse)
-  
   if (tool == "featureCounts") {
   files <- list.files(path = filePath.QC, pattern = ".txt.summary")
   for (i in 1:length(files)) {
@@ -80,7 +84,6 @@ MakeQCFile <- function(filePath.QC, tool) {
 
 ##### Function to make QC plots from qcFile and count matrix #####
 MakeQCPlots <- function(qcFile, countMatrix) {
-  library(readr)
   riboGenes <- read_csv("~/Dropbox (Partners HealthCare)/Filbin lab/Shared/Marker_genes/RibosomalGenes.csv", col_names = "Gene", show_col_types = FALSE) %>% pull(Gene)
   nRiboCounts <- countMatrix[rownames(countMatrix) %in% riboGenes,]
   riboQC <- data.frame(RiboPercent = colSums(nRiboCounts)/colSums(countMatrix), CountSum = colSums(countMatrix))
@@ -121,9 +124,6 @@ MakeQCPlots <- function(qcFile, countMatrix) {
 
 ##### Function to go from ENSEMBL to Gene Symbol #####
 Ensembl2Symbol <- function(countMatrix) {
-  library(biomaRt)
-  library(tidyverse)
-  
   # mart was created: July 14, 2022
   # mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
   mart <- readRDS("/Users/filbinlab/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/General RDS/ensembl_to_symbol.RDS")
@@ -170,12 +170,17 @@ CenterCountsMatrix <- function(countMatrix, alreadyCentered = FALSE){
   return(countMatrix_list)
 }
 
-##### Function to score bulk RNA-seq samples with gene-set #####
+##### Function to score bulk RNA-seq samples with gene-set and split for survival analysis #####
 ## countMatrix.center: centered relative expression (output of CenterCountsMatrix)
 ## countMatrix.mean: average of relative expression of each gene (log2 transformed; output of CenterCountsMatrix)
+## s: gene signature in vector form
+## geneSetName: what to name gene signature
+## metaData: metaData file where rownames are sample names/IDs
 ## n: number of genes with closest average expression for control genesets, default = 100 
+## splitBy: can split by Median (default) or Quartiles (type "Quartile")
 ## simple: whether use average, default  = FALSE
-ScoreSignature <- function(countMatrix.center, countMatrix.mean, s, n = 100, simple = FALSE, verbose=FALSE) {
+ScoreSignatureAndSplit <- function(countMatrix.center, countMatrix.mean, s, geneSetName, metaData,
+                                   n = 100, splitBy = "Median", simple = FALSE, verbose = FALSE) {
   if(verbose) {
     message("cells: ", ncol(countMatrix.center))
     message("genes: ", nrow(countMatrix.center))
@@ -184,6 +189,85 @@ ScoreSignature <- function(countMatrix.center, countMatrix.mean, s, n = 100, sim
     message("processing...")
   }
   
+  s <- intersect(rownames(countMatrix.center), s)
+  message("genes in signature, and also in this dataset: ", length(s))
+  
+  if (simple){
+    sigScore <- colMeans(v[s,])
+  } else {
+    sigScore <- colMeans(do.call(rbind, lapply(s, function(g) {
+      if(verbose) message(".", appendLF = FALSE)
+      g.n <- names(sort(abs(countMatrix.mean[g] - countMatrix.mean))[2:(n+1)])
+      countMatrix.center[g, ] - colMeans(countMatrix.center[g.n, ])
+    })))
+  }
+  
+  if(verbose) message(" done")
+  
+  sigScore <- sigScore %>% as.data.frame()
+  colnames(sigScore)[1] <- "geneSet"
+  
+  # if (splitBy == "Quartile") { n = 4 }
+  # if (splitBy == "Median") { n = 2 }
+  # 
+  # scoreSplit <- sigScore %>% mutate(clusters = ntile(sigScore[[geneSetName]], n))
+  # 
+  if(splitBy == "Quantile"){
+    params <- quantile(sigScore$geneSet)
+    scoreSplit <- sigScore %>% mutate(clusters = ifelse(geneSet > params[["75%"]], 3,
+                                                        ifelse(geneSet < params[["25%"]], 1, 2)))
+    }
+  ## Split based on median
+  if(splitBy == "Median"){
+    params <- median(sigScore$geneSet)
+    scoreSplit <- sigScore %>% mutate(clusters = ifelse(geneSet < params, 1, 2))
+  }
+  
+  colnames(scoreSplit) <- c(geneSetName, paste0(geneSetName, "_Cluster"))
+  scoreSplit <- scoreSplit %>% rownames_to_column(var = "SampleID.new")
+  
+  metaData <- merge(metaData, scoreSplit, by = "SampleID.new")
+  
+  return(metaData)
+}
+
+ScoreSurvival <- function(metaData, geneSetName){
+  ## Prep data for survival analysis- need time to death, patient, vital status, and group (high/low)
+  metaData$status <- as.logical(metaData$status)
+  metaData$time <- as.numeric(metaData$time)
+  metaData$Marker <- metaData[,paste0(geneSetName, "_Cluster")]
+  
+  ## Run survival analysis
+  fit <- survfit(Surv(time, status) ~Marker, data = metaData)
+  pvalue <- surv_pvalue(fit, metaData)$pval.txt
+  paste(fit)
+  plot1 <- ggsurvplot(fit,
+                      data = metaData,
+                      pval = TRUE,
+                      risk.table = TRUE,
+                      risk.table.y.text = FALSE,
+                      risk.table.height = 0.25)
+  return(list(plot = plot1, p_val = pvalue))
+}
+
+#########################
+##### Old Functions #####
+#########################
+
+##### Function to score bulk RNA-seq samples with gene-set #####
+## countMatrix.center: centered relative expression (output of CenterCountsMatrix)
+## countMatrix.mean: average of relative expression of each gene (log2 transformed; output of CenterCountsMatrix)
+## n: number of genes with closest average expression for control genesets, default = 100 
+## simple: whether use average, default  = FALSE
+ScoreSignature_old <- function(countMatrix.center, countMatrix.mean, s, n = 100, simple = FALSE, verbose=FALSE) {
+  if(verbose) {
+    message("cells: ", ncol(countMatrix.center))
+    message("genes: ", nrow(countMatrix.center))
+    message("genes in signature: ", length(s))
+    message("Using simple average?", simple)
+    message("processing...")
+  }
+
   s <- intersect(rownames(countMatrix.center), s)
   message("genes in signature, and also in this dataset: ", length(s))
 
@@ -196,7 +280,7 @@ ScoreSignature <- function(countMatrix.center, countMatrix.mean, s, n = 100, sim
       countMatrix.center[g, ] - colMeans(countMatrix.center[g.n, ])
     })))
   }
-  
+
   if(verbose) message(" done")
   return(s.score)
 }
@@ -210,10 +294,10 @@ SplitHighLow <- function(scoreDF, sampleIDColumn, signatureList, splitBy = "Medi
   colnames(AllClusters) <- sampleIDColumn
   for (m in names(signatureList)){
     print(m) # m is a geneset
-    df <- scoreDF %>% select(sampleIDColumn, m) %>% as.data.frame()
+    df <- scoreDF %>% dplyr::select(sampleIDColumn, m) %>% as.data.frame()
     ClusterName <- paste0(m, "_Cluster")
     df[[m]] <- as.numeric(df[[m]])
-    
+
     ## Alternative methods for splitting into high/low
     ## Split into top25%/mid50%/bottom25%
     if(splitBy == "SplitInto3Quartiles"){
@@ -222,36 +306,17 @@ SplitHighLow <- function(scoreDF, sampleIDColumn, signatureList, splitBy = "Medi
       low <- df[df[[m]] < quantile(df[[m]])["25%"],]; low[,"ClusterName"]<-"Low"
       mid <- df[!(df[[m]] %in% c(high[[m]], low[[m]])),]; mid[,"ClusterName"]<-"Mid"
       df <- rbind(high, low); df <- rbind(df, mid)
-    } 
+    }
     ## Split based on median
     if(splitBy=="Median"){
       df[,"ClusterName"]<- df[[m]] > median(df[[m]])
       df[,"ClusterName"]<- gsub("FALSE", "Low",gsub("TRUE", "High", df[,"ClusterName"]))
-    } 
-    
+    }
+
     ## Convert to factor, with "Low" as comparison
     #df$ClusterName<- factor(df$ClusterName, levels=c("High", "Low"))
     colnames(df)<- c(sampleIDColumn, m, ClusterName)
     AllClusters <- merge(AllClusters, df, by = sampleIDColumn)
   }
   return(AllClusters)
-}
-
-ScoreSurvival <- function(metaData, scoreSplitDF, geneSetName, lowHighOnly=FALSE, plotName=NULL){
-  ## Prep data for survival analysis- need time to death, patient, vital status, and group (high/low)
-  metaData$status <- as.logical(metaData$status)
-  metaData$time <- as.numeric(metaData$time)
-  metaData$Marker <- scoreSplitDF[,paste0(geneSetName, "_Cluster")]
-  
-  ## Run survival analysis
-  fit <- survfit(Surv(time, status) ~Marker, data = metaData)
-  pvalue <- surv_pvalue(fit, metaData)$pval.txt
-  paste(fit)
-  plot1 <- ggsurvplot(fit,
-                      data = metaData,
-                      pval = TRUE,
-                      risk.table = TRUE,
-                      risk.table.y.text = FALSE,
-                      risk.table.height = 0.25)
-  return(list(plot = plot1, p_val = pvalue))
 }
