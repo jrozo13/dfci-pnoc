@@ -1,0 +1,225 @@
+---
+title: "Multivariate Cox regression analysis"
+output: html_document
+---
+
+This template used to run multivariate cox regression analysis based on gene set score. This allows for controlling for confounders like tumor type, age, etc.
+
+## Overall steps:
+
+  1. Determine which clinical variables to control for- run univariate cox to identify variables that may have an effect on survival
+  2. Determine baseline level of effect of gene set score on survival- univariate cox. Can compare to kaplan-meier survival results (should be very similar)
+  3. Determine effect of gene set score on survival when clinical variables are included in model- multivariate cox
+  
+```{r}
+library(survival)
+library(survminer)
+library(dplyr)
+
+## Set working/script directory
+base_dir = "/Users/jlabelle/"
+working_dir<- paste0(base_dir, 
+                     "Dropbox (Partners HealthCare)/FilbinLab/",
+                     "data_analysis/Projects/git_repos/ProjectA/")
+script_dir = "Dropbox (Partners HealthCare)/FilbinLab/data_analysis/Shared/Scripts/"
+
+## Load helper functions
+helper_functions<- paste0(base_dir, script_dir,"Survival_HelperFunctions.R")
+source("~/Dropbox (Partners HealthCare)/Filbin lab/Shared/Scripts/Survival_HelperFunctions.R")
+
+## Set analysis name
+analysis_name<- "test"
+
+## Set directories
+data_dir<- paste0("analysis/KM_survival/", analysis_name, "/")
+analysis_dir<- paste0("analysis/coxRegression/", analysis_name, "/")
+figure_dir<- paste0("figures/coxRegression/", analysis_name, "/")
+if(!dir.exists(figure_dir)){dir.create(figure_dir, recursive = TRUE)};if(!dir.exists(analysis_dir)){dir.create(analysis_dir)}
+
+```
+
+## Load in data
+Input:
+list of "FinalMeta" from SurvivalAnalysis_template.Rmd
+
+Minimum columns required: 
+  a. SampleID ("submitter_id") 
+  b. time to death ("time") 
+  c. alive/dead ("censored"; alive= F, dead=T). Should be set as logical. 
+  d. At least 1 method for splitting samples. Can be 1) raw scores 2) high/low scores 3) raw proportion 4) high/low proportion. Each geneset/program should have its own column
+
+2.Clinical metadata. Contains variables you want to control for- age/sex/diagnosis/treatment/etc. First column should be sample ID. 
+Note: should remove any variables with NA values for any sample, or remove those samples.
+```{r}
+## Read in list with info for all cohorts tested
+surv_obj_list<- readRDS(paste0(data_dir, "SurvivalInput_allCohorts.Rds"))
+
+## Flatten FinalMeta into single df for all cohorts
+final_meta_list<- lapply(surv_obj_list, function(x){
+  tmp<- x$FinalMeta
+  tmp$Cohort<- x$cohort
+  return(tmp)
+  })
+FinalMeta<- do.call("rbind", final_meta_list)
+
+## Set genelists/programs to test
+genesets_test<- c("gluta", "gaba")
+```
+
+
+## Set variables to potentially control for
+## These are variables from your clinical metadata that you think may have an effect on survival.
+## Can also just use all variables
+```{r}
+## List with variables to control for (if running across multiple cohorts, may want to include "Cohort")
+ToControlFor<- c("age_at_index", "gender", "race", "MyDiagnosis")
+
+```
+
+
+## Optional: 
+1. Create additional variable, merging similar diagnoses together. This may not apply to all data.
+2. Subset by diagnosis- bc glioblastoma diagnosis has such a large effect, may want to remove it from consideration
+```{r}
+FinalMeta <- meta
+## Optional: add column to meta- astro/oligo/mixed/glio
+FinalMeta$MyDiagnosis<-gsub("Mixed glioma", "MixedGlioma", gsub("Astrocytoma, NOS", "Astrocytoma", 
+                         gsub("Oligodendroglioma, anaplastic", "Oligodendroglioma", 
+                              gsub("Oligodendroglioma, NOS", "Oligodendroglioma", 
+                                   gsub("Astrocytoma, anaplastic", "Astrocytoma", 
+                                        gsub("Glioblastoma", "Glioblastoma",
+                                             FinalMeta$primary_diagnosis))))))
+FinalMeta$MyDiagnosis<-as.factor(FinalMeta$MyDiagnosis)
+FinalMeta$censored <- FinalMeta$status
+
+
+## Optional: Subset to remove gbm or just look at 1 type
+FinalMeta_NoGBM<- FinalMeta[FinalMeta$project_id=="TCGA-LGG",]
+FinalMeta_NoGBM$MyDiagnosis <- factor(FinalMeta_NoGBM$MyDiagnosis)
+FinalMeta_Mixed<-FinalMeta[FinalMeta$primary_diagnosis=="Mixed glioma",]
+```
+
+                      
+## Run univariate cox to determine which variables to control for
+## RunCoxWrapper function input: 
+geneSet_groups = vector of genesets names to apply wrapper to
+FinalMeta = "FinalMeta"- contains time, censored, and all genesets in geneSet_groups
+controlFor = whether or not this will be univariate (FALSE) or multivariate (TRUE)
+mySubset = which samples used in analysis- only used for saving analysis. useful when trying out multiple subsets
+exportName = analysis name to use when saving data
+exportCsv = whether or not to export csv file of results
+subsetToHighLow = when splitting 25/50/25, subset to just 25/25
+
+```{r}
+## Run univariate cox for all potential controlling variables
+## set exportCsv to FALSE if you want to examine results before exporting
+allSamples_diagnosis<- RunCoxWrapper(geneSet_groups = ToControlFor, AllMeta= FinalMeta, mySubset="AllSamples", 
+                                     controlFor=FALSE, 
+                                     exportName = "univariate_variables", exportCsv=FALSE)
+
+## select just variables that had significant hazard
+cox_df<-na.omit(allSamples_diagnosis$cox_df)
+sig<-cox_df[cox_df$`Pr(>|z|)` < 0.1,]
+sig_variables<-unique(sig$Variable)
+
+ToBeControlled<- sig_variables
+```
+
+
+## Run univariate cox for genesets
+## Univariate
+```{r}
+## Run univariate for all samples
+allSamples<- RunCoxWrapper(genesets_test, FinalMeta, mySubset="AllSamples", 
+                                    controlFor=FALSE, exportName = "univariate",
+                                    exportCsv=FALSE, subsetToHighLow = FALSE)
+
+## Run univariate, without gbm samples
+NoGBM<- RunCoxWrapper(genesets_test, FinalMeta_NoGBM, mySubset="NoGBM", 
+                                    controlFor=FALSE, exportName = "univariate",
+                                    exportCsv=FALSE)
+
+
+```
+
+## Run multivariate cox, for all gene sets, controlling for variables
+## Can control for 1 or more variables
+## I've included some examples that were useful in my cohort, can control for whatever is appropriate for your cohort
+```{r}
+## Control for all sig clinical confounders- can also specify only a subset of these
+allSamples_diagnosis<- RunCoxWrapper(genesets_test, FinalMeta_NoGBM,
+                                     controlFor=ToControlFor,
+                                     exportName="ControlForDiagnosis")
+
+```
+
+
+
+## Testing proportionality assumption
+## Check this for at least one of the above models
+## Tests whether it's appropriate to apply regression model to these variables
+## If p<0.05, may need to stratify by that variable rather than controlling for it
+```{r}
+lapply(allSamples_diagnosis$cox_objs, function(x){cox.zph(x)})
+```
+
+
+## Optional: merge results together into a single df in order to summarize in a plot
+Useful when you run multiple cohorts separately, but want to get an overview of all cohorts together
+May need to modify for your data
+```{r}
+## Get all results files
+allResults_files<-list.files(analysis_dir, pattern="ControlFor")
+allResults_files<- allResults_files[grep("AllSamples", allResults_files)]
+uni_file<-list.files(analysis_dir, pattern="univariate")
+
+## Initiate dataframe with univariate file:
+  ## Read in first file
+  AllCox<- read.csv(paste0(analysis_dir, uni_file))
+  
+  #Subset to variables of interest, rename
+  AllCox<-AllCox[,colnames(AllCox) %in% c("X", "exp.coef.", "Pr...z..")]
+  colnames(AllCox)<- c("Variable", "HazardRatio", "pvalue")
+  
+  ## Add "ControlFor" column- "None" for univariate
+  AllCox$ControlFor<- "None"
+
+## cycle through rest of cox (multivariate), adding to univariate df
+  for (i in allResults_files){
+    df<- read.csv(paste0(figure_dir, i))
+    df<-df[,colnames(df) %in% c("X", "exp.coef.", "Pr...z..")]
+    colnames(df)<- c("Variable", "HazardRatio", "pvalue")
+    
+    #Get name of variable being controlled for, add to dataframe
+    ControlFor<- gsub("_AllSamples_results.csv", "",i )
+    ControlFor<-gsub("ControlFor", "", ControlFor)
+    df$ControlFor<-ControlFor
+    
+    ## Remove any rows that are the variable being controlled for- not of interest
+    ControlFor<-gsub("Score", "",  gsub("Primary", "Primary_", ControlFor))
+    ControlFor_split<-unlist(strsplit(ControlFor, "_"))
+    ControlFor_regex<- paste(ControlFor_split,collapse="|")
+    df2<- df[grep(ControlFor_regex, df$Variable, invert=TRUE, ignore.case = TRUE),]
+    df2<-df2[order(df2$Variable),]
+    
+    
+    AllCox<- rbind(AllCox, df2)
+  }
+
+## Add on information about the cohort + whether gene set is categorical (high/low) or numerical (raw scores)  
+AllCox$Cohort<-paste(cohort, age, sep="_")
+AllCox$CategoricalOrNumerical<- grepl("Cluster", AllCox$Variable)
+AllCox$CategoricalOrNumerical<- gsub("TRUE", "Categorical", 
+                                     gsub("FALSE", "Numerical", AllCox$CategoricalOrNumerical))
+
+
+
+table(AllCox$Variable)
+
+write.csv(AllCox,paste0(analysis_dir, "allCoxResults.csv"))
+```
+
+
+
+
+

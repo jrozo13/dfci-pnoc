@@ -19,13 +19,19 @@ wd <- c("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-
 fwd <- c(paste0(wd, "Figures/"))
 
 ########## Load Data ##########
+##### Load bulk RNAseq Data
+cm_fc <- MakeCountMatrixFromFeatureCounts(filePath = "~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/star-fc/")
+cm_rsem <- MakeCountMatrixFromRSEM(filePath = "~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/star-rsem/cm_counts_counts-rsem.csv")
+txi.rsem <- MakeCountMatrixWithTximport(filePath = "~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/star-rsem/", method = "rsem")
+txi.salmon <- MakeCountMatrixWithTximport(filePath = "~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/salmon/", method = "salmon")
+
 ##### Load AYA clinical data
 meta <- read_excel("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/Deidentified RNAseq Patient Clinical Data.xlsx",
                    skip = 1) 
 meta <- meta %>%
   mutate(SampleID.new = paste0("s", sapply(strsplit(as.character(meta$SampleID), "-"), `[`, 1))) %>% 
   # only keeps sample ID before "-"
-  filter(SampleID.new %in% colnames(countFile_fc)) %>%
+  filter(SampleID.new %in% colnames(cm_rsem)) %>%
   filter(SampleID != "94410-1*") %>%
   mutate(time = as.numeric(`Overall Survival (Years)`)) %>% 
   mutate(pathology16 = `Pathology at Diagnosis`) %>%
@@ -37,12 +43,7 @@ meta <- meta %>%
 meta$SampleID.new %in% colnames(countFile_fc) %>% table()
 colnames(countFile_fc) %in% meta$SampleID.new %>% table()
 
-##### Load bulk RNAseq Data
-cm_fc <- MakeCountMatrixFromFeatureCounts(filePath = "~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/star-fc/")
-cm_rsem <- MakeCountMatrixFromRSEM(filePath = "~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/star-rsem/cm_counts_counts-rsem.csv")
-txi.rsem <- MakeCountMatrixWithTximport(filePath = "~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/star-rsem/", method = "rsem")
-txi.salmon <- MakeCountMatrixWithTximport(filePath = "~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/salmon/", method = "salmon")
-
+###
 library(DESeq2)
 meta_for_dds <- meta %>% tibble::column_to_rownames(var = "SampleID.new")
 sample_order <- txi.rsem$counts %>% colnames()
@@ -148,7 +149,7 @@ input <- CenterCountsMatrix(countMatrix = cpm_rsem)
 meta2 <- ScoreSignatureAndSplit(countMatrix.center = input$countMatrix_center,
                                 countMatrix.mean = input$countMatrix_mean,
                                 metaData = meta,
-                                s = "OLIG2",
+                                s = c("GRIK3", "GRIK5"),
                                 geneSetName = "test",
                                 splitBy = "Median",
                                 verbose = TRUE)
@@ -172,6 +173,38 @@ for (gene in gluta.sig) {
   geneSignif <- rbind(geneSignif, data.frame(gene = gene, pvalue = pval))
   
 }
+
+dds <- DESeqDataSetFromTximport(txi = txi.rsem, colData = meta2, design = ~test_Cluster)
+dds <- DESeq(dds)
+res <- na.omit(results(dds, contrast=c("test_Cluster", "High", "Low")))
+res <- as.data.frame(res)
+res <- res[order(res$padj),]
+res$Group <- ifelse(res$log2FoldChange>0, "High", "Low")
+
+EnhancedVolcano(res,
+                lab=rownames(res),
+                x="log2FoldChange",
+                y="padj",
+                title="High v Low GRIK Expression",
+                subtitle = "",
+                pCutoff=1e-10,
+                FCcutoff = .75,
+                col=c('black', 'black', 'black', 'red3'),
+                ylab = "-Log10(p.adj)")
+
+highGrik.genes <- filter(res, padj < 0.05 & log2FoldChange > 0) %>% arrange(padj) %>% rownames() %>% unique()
+lowGrik.genes <- filter(res, padj < 0.05 & log2FoldChange < 0) %>% arrange(padj) %>% rownames() %>% unique()
+
+enrichGO(gene = lowGrik.genes,
+         universe = as.character(rownames(res)),
+         OrgDb = org.Hs.eg.db,
+         keyType = 'ENSEMBL',
+         ont = "BP",
+         pAdjustMethod = "BH",
+         qvalueCutoff = 0.05,
+         readable = TRUE ) %>%
+  enrichplot::pairwise_termsim() %>%
+  dotplot(showCategory=30)
 
 
 scoreDF <- meta %>% dplyr::select(SampleID.new, pathology16, pathology21, time, status)
