@@ -1,0 +1,58 @@
+---
+title: "AYA LGG DFCI BulkRNASeq"
+output: html_document
+date: "2022-08-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+########## Initialize ##########
+Install global packages and functions
+```{r}
+library(tidyverse)
+library(readxl)
+library(pheatmap)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(DESeq2)
+
+source("~/Dropbox (Partners HealthCare)/Filbin/Jacob/dfci-pnoc/bulkRNAseq-scripts.R")
+
+wd <- c("~/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/AYA Bulk RNA-seq/")
+fwd <- c(paste0(wd, "Figures/"))
+```
+
+########## Load Data ##########
+Load bulk RNAseq Data
+```{r}
+txi.rsem <- MakeCountMatrixWithTximport(filePath = "~/Dropbox (Partners HealthCare)/Filbin/Jacob/Projects/AYA Bulk RNA-seq/star-rsem/", method = "rsem")
+patient_ids <- txi.rsem$counts %>% colnames() %>% unique()
+```
+
+Load AYA clinical data
+``` {r}
+meta <- read_excel("~/Dropbox (Partners HealthCare)/Filbin/Jacob/Projects/AYA Bulk RNA-seq/Deidentified RNAseq Patient Clinical Data.xlsx", skip = 1)
+meta <- meta %>%
+  mutate(SampleID = paste0("s", sapply(strsplit(as.character(meta$SampleID), "-"), `[`, 1))) %>% 
+  # only keeps sample ID before "-"
+  dplyr::distinct(SampleID, .keep_all = TRUE) %>%
+  filter(SampleID %in% patient_ids) %>%
+  filter(SampleID != "94410-1*") %>%
+  mutate(time = as.numeric(`Overall Survival (Years)`)) %>% 
+  mutate(status = ifelse(`Vital Status` == "Alive", 1, 2)) # this will be used in `status` in survival package
+
+# check
+meta$SampleID %in% patient_ids %>% table()
+patient_ids %in% meta$SampleID %>% table()
+```
+
+Make dds object 
+```{r}
+meta_for_dds <- meta %>% tibble::column_to_rownames(var = "SampleID")
+meta_for_dds <- meta_for_dds[patient_ids,]
+dds.rsem <- DESeqDataSetFromTximport(txi = txi.rsem, colData = meta_for_dds, design = ~1)
+```
+

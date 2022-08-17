@@ -57,7 +57,7 @@ MakeCountMatrixWithTximport <- function(filePath, method) {
   # save(mart, tx_list, file = "/Users/filbinlab/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/General RDS/tx_to_ensembl.RData")
   
   # load(file = "/Users/filbinlab/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/General RDS/tx_to_ensembl.RData")
-  load(file = "/Users/filbinlab/Dropbox (Partners HealthCare)/Filbin lab/Jacob/Projects/General RDS/tx_to_ensembl.RData")
+  load(file = "/Users/jrozowsk/Dropbox (Partners HealthCare)/Filbin/Jacob/Projects/General RDS/tx_to_ensembl.RData")
   
   if (method == "rsem") {
     files <- list.files(path = filePath, pattern = ".isoforms.results")
